@@ -1,14 +1,13 @@
 """
-Upgraded LiveKit Agent (intern version)
+Upgraded LiveKit Agent 
 
 This version adds:
 - basic wake word handling
 - simple interruption rules
 - some token filtering stuff
 - continuous speech check (rough attempt)
-- multi-speaker mapping (still kinda basic)
+- multi-speaker mapping 
 
-Note: This is still a work-in-progress. I tried to keep things readable.
 """
 
 import time
