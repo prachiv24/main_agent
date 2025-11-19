@@ -1,106 +1,96 @@
 import os
 from livekit.agents import JobContext, Agent
-# Import other necessary LiveKit components (e.g., Room, TTS, ASR components)
 
-# 1. CONFIGURATION (IGNORED_WORDS)
-# Define the configurable list of filler words as a class constant or load from environment
-IGNORED_WORDS = {'uh', 'umm', 'hmm', 'haan', 'like', 'i mean'} 
+# Additional custom imports—add utilities if needed
 
-class MyIntelligentAgent(Agent):
+# Configuration: Filler words for interruption filtering
+FILLERS = {"uh", "umm", "hmm", "haan", "like", "i mean"}
+
+class ConversationalInterruptAgent(Agent):
     """
-    A custom LiveKit Agent with intelligent voice interruption handling.
+    A LiveKit agent built for nuanced voice interruption management.
+    The design here emphasizes real-world conversational needs and experimental triggers.
     """
-    
-    def __init__(self, ctx: JobContext):
+
+    def __init__(self, context: JobContext):
         super().__init__()
-        self.ctx = ctx
-        self.room = ctx.room
-        
-        # 2. STATE INITIALIZATION (in __init__)
-        # Crucial state flag: Tracks if the agent is actively talking (TTS output)
-        self.is_agent_speaking = False 
-        
-        # Initialize your ASR and TTS components here
-        self.asr = self.setup_asr() # Assume this function is defined
-        self.tts = self.setup_tts() # Assume this function is defined
-        
-        # Setup event listeners for transcription and TTS output
-        self.room.on('track_published', self.on_track_published)
-        # Assuming your ASR output triggers this event:
-        self.asr.on('transcription_received', self.on_user_transcription)
-        
-    # --- 3. TTS/OUTPUT EVENT HANDLERS ---
-    
-    # Called when the agent starts sending audio to the user
-    def on_tts_start(self):
-        """Called by the TTS component wrapper when audio generation starts."""
-        print("[STATE] Agent STARTING to speak.")
-        self.is_agent_speaking = True
-        
-    # Called when the agent finishes sending all buffered audio
-    def on_tts_complete(self):
-        """Called by the TTS component wrapper when the audio queue is empty."""
-        print("[STATE] Agent FINISHED speaking.")
-        self.is_agent_speaking = False
-        
-    # Optional: Handler for when TTS is forcefully stopped (e.g., by an interruption)
-    def on_tts_interrupted(self):
-        """Called when a valid interruption forces TTS to stop."""
-        print("[STATE] Agent INTERRUPTED.")
-        self.is_agent_speaking = False
+        self.context = context
+        self.room = context.room
 
-    # --- 4. ASR/TRANSCRIPTION EVENT HANDLER (Core Logic) ---
-    
-    def on_user_transcription(self, transcription: str):
-        
-        normalized_text = transcription.lower().strip()
-        words = set(normalized_text.split())
-        
-        # Helper check: is the transcription composed ONLY of ignored words?
-        is_filler_only = words.issubset(IGNORED_WORDS) and len(words) > 0
+        # Tracks active speech synthesis (agent speaking status)
+        self.synth_active = False
 
-        # Conditional Filtering based on Agent State
-        if self.is_agent_speaking:
-            
-            if is_filler_only:
-                # SCENARIO 1: Agent is speaking AND user said only fillers.
-                # ACTION: IGNORE and CONTINUE speaking.
-                print(f"[DEBUG] IGNORED FILLER: '{transcription}'. Agent continues TTS.")
-                # Important: Return here to prevent the TTS from being paused by VAD
-                return 
-            else:
-                # SCENARIO 2: Agent is speaking AND user said a genuine command.
-                # ACTION: STOP TTS IMMEDIATELY and process input.
-                print(f"[ACTION] VALID INTERRUPTION: '{transcription}'. Stopping TTS.")
-                
-                # Force the TTS pipeline to stop its current output
-                self.tts.stop_output() 
-                self.on_tts_interrupted() # Update state
-                
-                self.process_user_input(transcription)
+        # ASR and TTS modules—real implementations below
+        self.speech_rec = self._setup_asr()
+        self.speech_syn = self._setup_tts()
 
+        # Register event listeners for relevant LiveKit events
+        self.room.on("track_published", self._on_track_published)
+        self.speech_rec.on("transcription_received", self._on_transcript_rx)
+
+    # Event handler: speech synthesis starts
+    def _on_tts_start(self):
+        print("[INFO] Agent vocalization began.")
+        self.synth_active = True
+
+    # Event handler: synthesis completes (all audio sent)
+    def _on_tts_finish(self):
+        print("[INFO] Agent finished talking.")
+        self.synth_active = False
+
+    # Event handler: forced TTS interruption (external/user command)
+    def _on_tts_halt(self):
+        print("[WARN] Agent interrupted—TTS forced to stop.")
+        self.synth_active = False
+
+    # Core ASR event: transcript received from user
+    def _on_transcript_rx(self, transcript: str):
+        clean_txt = transcript.lower().strip()
+        words = set(clean_txt.split())
+
+        is_only_filler = words.issubset(FILLERS) and len(words) > 0
+
+        # If the agent is talking, process interruptions
+        if self.synth_active:
+            if is_only_filler:
+                print(f"[DEBUG] Ignored filler: '{transcript}' while agent speaks.")
+                return
+            # Interrupt agent with real user input
+            print(f"[ACTION] Valid interruption: '{transcript}'. Stopping TTS for processing.")
+            try:
+                self.speech_syn.stop_output()
+            except Exception as stop_err:
+                print("[ERROR] Issue stopping TTS:", stop_err)
+            self._on_tts_halt()
+            self._process_user_input(transcript)
         else:
-            # SCENARIO 3: Agent is quiet. All speech (including fillers) is registered.
-            # ACTION: REGISTER as valid speech to initiate the next turn.
-            print(f"[ACTION] REGISTERED INPUT: '{transcription}'. Agent is quiet.")
-            self.process_user_input(transcription)
+            # Agent is silent, so all speech is considered input
+            print(f"[ACTION] Registered user input: '{transcript}' while agent is silent.")
+            self._process_user_input(transcript)
 
-    # Placeholder for your main dialogue function
-    def process_user_input(self, text):
-        # Your logic to get a response from an LLM/DM
-        # ...
-        
-        # Then, when you get the response:
-        # self.on_tts_start()
-        # self.tts.play_audio(response_audio)
-        # self.on_tts_complete() # Called once audio finishes
+    # Main dialogue logic—connect to your LLM/DM here
+    def _process_user_input(self, utterance: str):
+        # Placeholder: integrate business logic, external API, or language model
+        # Example: send utterance to backend, get response, trigger TTS output
+        print(f"[WORKFLOW] Processing user query: {utterance}")
+        # After processing and preparing response:
+        # self._on_tts_start()
+        # self.speech_syn.play_audio(response_audio)
+        # self._on_tts_finish()
         pass
 
-    # Placeholder for LiveKit boilerplate setup
-    def setup_asr(self):
-        # ... setup ASR component ...
-        pass
-        
-    def setup_tts(self):
-        # ... setup TTS component, ensuring it calls on_tts_start/complete ...
+    # Setup methods for ASR and TTS (customize for real implementations)
+    def _setup_asr(self):
+        # Implement actual ASR system integration here
+        print("[INIT] Initializing ASR...")
+        return None  # Replace with instantiated ASR object
+
+    def _setup_tts(self):
+        # Implement actual TTS engine setup here, including callbacks
+        print("[INIT] Initializing TTS...")
+        return None  # Replace with instantiated TTS object
+
+    def _on_track_published(self, *args, **kwargs):
+        print("[EVENT] Track published in room.")
+        # Custom logic per track addition or relevant audio events
         pass
